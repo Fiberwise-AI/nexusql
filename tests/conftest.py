@@ -116,7 +116,13 @@ def db_manager(request, sqlite_url, postgresql_url, mysql_url, mssql_url):
         if not db.connect():
             # For MSSQL, try to create the database if it doesn't exist
             if db_type == 'mssql':
-                master_url = mssql_url.rsplit('/', 1)[0] + '/master'
+                # Preserve query parameters when switching to master database
+                if '?' in mssql_url:
+                    base_url, query_params = mssql_url.rsplit('?', 1)
+                    master_url = base_url.rsplit('/', 1)[0] + '/master?' + query_params
+                else:
+                    master_url = mssql_url.rsplit('/', 1)[0] + '/master'
+
                 master_db = DatabaseManager(master_url)
                 if master_db.connect():
                     try:

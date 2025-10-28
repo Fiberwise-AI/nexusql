@@ -66,3 +66,10 @@ python_classes = "Test*"
 python_functions = "test_*"
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "mysql: marks tests as MySQL-specific tests",
+    "mssql: marks tests as MSSQL-specific tests",
+    "postgresql: marks tests as PostgreSQL-specific tests",
+]

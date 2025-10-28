@@ -34,19 +34,21 @@ def mssql_db(mssql_config):
     # Try to connect, if database doesn't exist, try creating it
     if not db.connect():
         # Try connecting to master to create the database
-        master_url = os.environ.get(
+        test_url = os.environ.get(
             "TEST_MSSQL_URL",
             "mssql://sa:TestPass123!@localhost:11433/ia_modules_test"
-        ).rsplit('/', 1)[0] + '/master'
+        )
+        # Preserve query parameters when switching to master database
+        if '?' in test_url:
+            base_url, query_params = test_url.rsplit('?', 1)
+            master_url = base_url.rsplit('/', 1)[0] + '/master?' + query_params
+        else:
+            master_url = test_url.rsplit('/', 1)[0] + '/master'
 
         master_db = DatabaseManager(master_url)
         if master_db.connect():
             try:
                 # Extract database name from URL
-                test_url = os.environ.get(
-                    "TEST_MSSQL_URL",
-                    "mssql://sa:TestPass123!@localhost:11433/ia_modules_test"
-                )
                 db_name = test_url.rsplit('/', 1)[1].split('?')[0]
                 # Create the test database - MSSQL requires autocommit for CREATE DATABASE
                 master_db._connection.autocommit = True
