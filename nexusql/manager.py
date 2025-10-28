@@ -40,6 +40,7 @@ class DatabaseManager:
             self.database_url = database_url_or_config
             self.config = ConnectionConfig.from_url(database_url_or_config)
         self._connection = None
+        self._in_transaction = False
         
     async def initialize(self, apply_schema: bool = True, app_migration_paths: Optional[List[str]] = None) -> bool:
         """
@@ -191,6 +192,7 @@ class DatabaseManager:
                         conn_str_parts.append("TrustServerCertificate=yes")
 
                     conn_str = ";".join(conn_str_parts)
+                    logger.debug(f"MSSQL connection string: {conn_str!r}")
                     self._connection = pyodbc.connect(conn_str)
 
                 self._connection.autocommit = False
@@ -633,10 +635,16 @@ class DatabaseManager:
         try:
             cursor = self._execute_raw(query, params)
 
-            # Check if this is a SELECT query
+            # Check if this is a query that returns results
             query_upper = query.strip().upper()
-            if query_upper.startswith('SELECT') or query_upper.startswith('SHOW') or query_upper.startswith('DESCRIBE'):
-                # Fetch results for SELECT queries
+            is_select = query_upper.startswith('SELECT') or query_upper.startswith('SHOW') or query_upper.startswith('DESCRIBE')
+            # MSSQL INSERT/UPDATE/DELETE with OUTPUT clause returns results
+            has_output = 'OUTPUT' in query_upper and self.config.database_type == DatabaseType.MSSQL
+            # MSSQL EXEC can return results from stored procedures
+            is_exec = query_upper.startswith('EXEC') and self.config.database_type == DatabaseType.MSSQL
+
+            if is_select or has_output or is_exec:
+                # Fetch results
                 rows = cursor.fetchall()
                 if not rows:
                     return []
@@ -650,8 +658,27 @@ class DatabaseManager:
                     # SQLite and MySQL return dict-like rows
                     return [dict(row) for row in rows]
             else:
-                # For INSERT/UPDATE/DELETE, just commit
-                self._connection.commit()
+                # For INSERT/UPDATE/DELETE, handle transaction state
+                query_norm = query_upper.strip().rstrip(';').replace('  ', ' ')
+
+                # Track transaction state
+                if query_norm in ['BEGIN', 'BEGIN TRANSACTION', 'START TRANSACTION']:
+                    self._in_transaction = True
+                elif query_norm in ['COMMIT', 'COMMIT TRANSACTION']:
+                    self._in_transaction = False
+                    # Explicit commit
+                    self._connection.commit()
+                elif query_norm in ['ROLLBACK', 'ROLLBACK TRANSACTION']:
+                    self._in_transaction = False
+                    # Explicit rollback
+                    self._connection.rollback()
+                elif query_norm.startswith('SAVE TRANSACTION ') or query_norm.startswith('ROLLBACK TRANSACTION '):
+                    # Savepoint operations - don't end transaction, let database handle it
+                    pass
+                elif not self._in_transaction:
+                    # Auto-commit only when not in an explicit transaction
+                    self._connection.commit()
+
                 return []
 
         except Exception as e:

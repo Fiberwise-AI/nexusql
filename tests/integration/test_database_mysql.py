@@ -88,12 +88,12 @@ class TestMySQLBasicOperations:
 
         # Insert data
         mysql_db.execute(
-            "INSERT INTO test_users (username, email) VALUES (%s, %s)",
-            ("john_doe", "john@example.com")
+            "INSERT INTO test_users (username, email) VALUES (:username, :email)",
+            {"username": "john_doe", "email": "john@example.com"}
         )
 
         # Select data
-        result = mysql_db.execute("SELECT * FROM test_users WHERE username = %s", ("john_doe",))
+        result = mysql_db.execute("SELECT * FROM test_users WHERE username = :username", {"username": "john_doe"})
         assert len(result) == 1
         assert result[0]['username'] == "john_doe"
         assert result[0]['email'] == "john@example.com"
@@ -109,18 +109,18 @@ class TestMySQLBasicOperations:
         ''')
 
         mysql_db.execute(
-            "INSERT INTO test_users (username, email) VALUES (%s, %s)",
-            ("john_doe", "john@example.com")
+            "INSERT INTO test_users (username, email) VALUES (:username, :email)",
+            {"username": "john_doe", "email": "john@example.com"}
         )
 
         # Update data
         mysql_db.execute(
-            "UPDATE test_users SET email = %s WHERE username = %s",
-            ("newemail@example.com", "john_doe")
+            "UPDATE test_users SET email = :email WHERE username = :username",
+            {"email": "newemail@example.com", "username": "john_doe"}
         )
 
         # Verify update
-        result = mysql_db.execute("SELECT email FROM test_users WHERE username = %s", ("john_doe",))
+        result = mysql_db.execute("SELECT email FROM test_users WHERE username = :username", {"username": "john_doe"})
         assert result[0]['email'] == "newemail@example.com"
 
     def test_delete(self, mysql_db):
@@ -132,10 +132,10 @@ class TestMySQLBasicOperations:
             )
         ''')
 
-        mysql_db.execute("INSERT INTO test_users (username) VALUES (%s)", ("john_doe",))
-        mysql_db.execute("DELETE FROM test_users WHERE username = %s", ("john_doe",))
+        mysql_db.execute("INSERT INTO test_users (username) VALUES (:username)", {"username": "john_doe"})
+        mysql_db.execute("DELETE FROM test_users WHERE username = :username", {"username": "john_doe"})
 
-        result = mysql_db.execute("SELECT * FROM test_users WHERE username = %s", ("john_doe",))
+        result = mysql_db.execute("SELECT * FROM test_users WHERE username = :username", {"username": "john_doe"})
         assert len(result) == 0
 
 
@@ -157,8 +157,8 @@ class TestMySQLDataTypes:
         test_data = {"name": "John", "age": 30, "tags": ["python", "mysql"]}
 
         mysql_db.execute(
-            "INSERT INTO test_json (data) VALUES (%s)",
-            (json.dumps(test_data),)
+            "INSERT INTO test_json (data) VALUES (:data)",
+            {"data": json.dumps(test_data)}
         )
 
         result = mysql_db.execute("SELECT data FROM test_json")
@@ -202,8 +202,8 @@ class TestMySQLDataTypes:
         long_text = "Long " * 10000
 
         mysql_db.execute(
-            "INSERT INTO test_data (tiny_text, medium_text, long_text) VALUES (%s, %s, %s)",
-            (short_text, medium_text, long_text)
+            "INSERT INTO test_data (tiny_text, medium_text, long_text) VALUES (:tiny, :medium, :long)",
+            {"tiny": short_text, "medium": medium_text, "long": long_text}
         )
 
         result = mysql_db.execute("SELECT * FROM test_data")
@@ -223,13 +223,13 @@ class TestMySQLTransactions:
             CREATE TABLE test_transactions (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 value VARCHAR(100)
-            )
+            ) ENGINE=InnoDB
         ''')
 
         # Start transaction (implicitly with first statement)
         mysql_db.execute("START TRANSACTION")
-        mysql_db.execute("INSERT INTO test_transactions (value) VALUES (%s)", ("test1",))
-        mysql_db.execute("INSERT INTO test_transactions (value) VALUES (%s)", ("test2",))
+        mysql_db.execute("INSERT INTO test_transactions (value) VALUES (:value)", {"value": "test1"})
+        mysql_db.execute("INSERT INTO test_transactions (value) VALUES (:value)", {"value": "test2"})
         mysql_db.execute("COMMIT")
 
         result = mysql_db.execute("SELECT COUNT(*) as count FROM test_transactions")
@@ -241,11 +241,11 @@ class TestMySQLTransactions:
             CREATE TABLE test_transactions (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 value VARCHAR(100)
-            )
+            ) ENGINE=InnoDB
         ''')
 
         mysql_db.execute("START TRANSACTION")
-        mysql_db.execute("INSERT INTO test_transactions (value) VALUES (%s)", ("test1",))
+        mysql_db.execute("INSERT INTO test_transactions (value) VALUES (:value)", {"value": "test1"})
         mysql_db.execute("ROLLBACK")
 
         result = mysql_db.execute("SELECT COUNT(*) as count FROM test_transactions")
@@ -270,8 +270,8 @@ class TestMySQLPerformance:
         # Insert 1000 records
         for i in range(1000):
             mysql_db.execute(
-                "INSERT INTO test_items (name, value) VALUES (%s, %s)",
-                (f"item_{i}", i)
+                "INSERT INTO test_items (name, value) VALUES (:name, :value)",
+                {"name": f"item_{i}", "value": i}
             )
 
         result = mysql_db.execute("SELECT COUNT(*) as count FROM test_items")
@@ -291,14 +291,14 @@ class TestMySQLPerformance:
         # Insert test data
         for i in range(100):
             mysql_db.execute(
-                "INSERT INTO test_items (name, value) VALUES (%s, %s)",
-                (f"item_{i}", i)
+                "INSERT INTO test_items (name, value) VALUES (:name, :value)",
+                {"name": f"item_{i}", "value": i}
             )
 
         # Query using index
         result = mysql_db.execute(
-            "SELECT * FROM test_items WHERE name = %s",
-            ("item_50",)
+            "SELECT * FROM test_items WHERE name = :name",
+            {"name": "item_50"}
         )
 
         assert len(result) == 1
@@ -321,7 +321,7 @@ class TestMySQLCharsetAndCollation:
 
         # Insert emoji and special characters
         emoji_text = "Hello 👋 World 🌍 Test 🚀"
-        mysql_db.execute("INSERT INTO test_data (text) VALUES (%s)", (emoji_text,))
+        mysql_db.execute("INSERT INTO test_data (text) VALUES (:text)", {"text": emoji_text})
 
         result = mysql_db.execute("SELECT text FROM test_data")
         assert result[0]['text'] == emoji_text
@@ -335,8 +335,8 @@ class TestMySQLCharsetAndCollation:
             )
         ''')
 
-        mysql_db.execute("INSERT INTO test_data (name) VALUES (%s)", ("TestName",))
+        mysql_db.execute("INSERT INTO test_data (name) VALUES (:name)", {"name": "TestName"})
 
         # Case-insensitive search should find the record
-        result = mysql_db.execute("SELECT * FROM test_data WHERE name = %s", ("testname",))
+        result = mysql_db.execute("SELECT * FROM test_data WHERE name = :name", {"name": "testname"})
         assert len(result) == 1

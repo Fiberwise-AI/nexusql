@@ -110,7 +110,7 @@ jobs:
       env:
         TEST_POSTGRESQL_URL: "postgresql://postgres:postgres@localhost:5432/nexusql_test"
         TEST_MYSQL_URL: "mysql://testuser:testpass@localhost:3306/nexusql_test"
-        TEST_MSSQL_URL: "mssql://sa:TestPass123!@localhost:1433/master?TrustServerCertificate=yes"
+        TEST_MSSQL_URL: "mssql://sa:TestPass123!@localhost:1433/nexusql_test?TrustServerCertificate=yes"
       run: |
         pytest tests/integration/ -v --tb=short --cov=nexusql --cov-append --cov-report=xml --cov-report=term
 

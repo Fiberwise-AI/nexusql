@@ -16,9 +16,36 @@ from nexusql import DatabaseManager
 
 
 @pytest.fixture(params=["sqlite", "postgresql", "mysql", "mssql"], ids=lambda x: x)
-def db(request, db_manager):
-    """Use parameterized db_manager from conftest"""
-    return db_manager
+def db(request):
+    """Provide a database manager for each database type"""
+    from nexusql import DatabaseManager
+    import os
+
+    url_map = {
+        'sqlite': f"sqlite:///:memory:",
+        'postgresql': os.getenv("TEST_POSTGRESQL_URL", "postgresql://testuser:testpass@localhost:15432/ia_modules_test"),
+        'mysql': os.getenv("TEST_MYSQL_URL", "mysql://testuser:testpass@localhost:13306/ia_modules_test"),
+        'mssql': os.getenv("TEST_MSSQL_URL", "mssql://sa:TestPass123!@localhost:11433/master?TrustServerCertificate=yes")
+    }
+
+    db_type = request.param
+    db_url = url_map[db_type]
+    db = DatabaseManager(db_url)
+
+    # Try to connect, skip if not available
+    try:
+        if not db.connect():
+            pytest.skip(f"{db_type} not available")
+    except Exception as e:
+        pytest.skip(f"{db_type} not available: {e}")
+
+    yield db
+
+    # Cleanup
+    try:
+        db.disconnect()
+    except:
+        pass
 
 
 def test_null_parameter_handling(db):
@@ -114,14 +141,33 @@ def test_boolean_parameter_handling(db):
     except:
         pass
 
-    # SQLite doesn't have native boolean, use INTEGER
-    db.execute("""
-        CREATE TABLE test_booleans (
-            id INTEGER PRIMARY KEY,
-            is_active INTEGER,
-            is_deleted INTEGER
-        )
-    """)
+    # Create table with appropriate boolean type for each database
+    from nexusql import DatabaseType
+    if db.config.database_type == DatabaseType.POSTGRESQL:
+        db.execute("""
+            CREATE TABLE test_booleans (
+                id INTEGER PRIMARY KEY,
+                is_active BOOLEAN,
+                is_deleted BOOLEAN
+            )
+        """)
+    elif db.config.database_type == DatabaseType.MYSQL:
+        db.execute("""
+            CREATE TABLE test_booleans (
+                id INTEGER PRIMARY KEY,
+                is_active BOOLEAN,
+                is_deleted BOOLEAN
+            )
+        """)
+    else:
+        # SQLite and MSSQL use INTEGER for booleans
+        db.execute("""
+            CREATE TABLE test_booleans (
+                id INTEGER PRIMARY KEY,
+                is_active INTEGER,
+                is_deleted INTEGER
+            )
+        """)
 
     # Insert with boolean values
     db.execute(
@@ -129,10 +175,10 @@ def test_boolean_parameter_handling(db):
         {'id': 1, 'active': True, 'deleted': False}
     )
 
-    # Verify booleans were converted correctly
+    # Verify booleans were stored correctly
     result = db.fetch_one("SELECT * FROM test_booleans WHERE id = :id", {'id': 1})
     assert result is not None
-    # SQLite stores as 1/0
+    # Different databases return different types
     assert result['is_active'] in (True, 1)
     assert result['is_deleted'] in (False, 0)
 

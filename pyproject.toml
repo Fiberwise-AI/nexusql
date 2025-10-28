@@ -53,7 +53,8 @@ Issues = "https://github.com/yourusername/nexusql/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["nexusql*"]
+include = ["nexusql"]
+namespaces = false
 
 [tool.setuptools.package-data]
 nexusql = ["migrations/*.sql"]

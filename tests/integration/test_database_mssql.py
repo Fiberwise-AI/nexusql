@@ -18,7 +18,7 @@ def mssql_config():
     """Get MSSQL connection configuration from environment"""
     url = os.environ.get(
         "TEST_MSSQL_URL",
-        "mssql://sa:TestPass123!@localhost:1433/ia_modules_test"
+        "mssql://sa:TestPass123!@localhost:11433/ia_modules_test"
     )
     return ConnectionConfig(
         database_type=DatabaseType.MSSQL,
@@ -30,7 +30,36 @@ def mssql_config():
 def mssql_db(mssql_config):
     """Create an MSSQL database manager for testing"""
     db = DatabaseManager(mssql_config)
-    db.connect()
+
+    # Try to connect, if database doesn't exist, try creating it
+    if not db.connect():
+        # Try connecting to master to create the database
+        master_url = os.environ.get(
+            "TEST_MSSQL_URL",
+            "mssql://sa:TestPass123!@localhost:11433/ia_modules_test"
+        ).rsplit('/', 1)[0] + '/master'
+
+        master_db = DatabaseManager(master_url)
+        if master_db.connect():
+            try:
+                # Extract database name from URL
+                test_url = os.environ.get(
+                    "TEST_MSSQL_URL",
+                    "mssql://sa:TestPass123!@localhost:11433/ia_modules_test"
+                )
+                db_name = test_url.rsplit('/', 1)[1].split('?')[0]
+                # Create the test database - MSSQL requires autocommit for CREATE DATABASE
+                master_db._connection.autocommit = True
+                master_db.execute(f"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{db_name}') CREATE DATABASE {db_name}")
+                master_db._connection.autocommit = False
+                master_db.disconnect()
+                # Now try connecting to the test database again
+                if not db.connect():
+                    pytest.skip("Cannot connect to MSSQL database")
+            except Exception as e:
+                pytest.skip(f"Cannot create MSSQL test database: {e}")
+        else:
+            pytest.skip("MSSQL not available")
 
     # Clean up test tables
     test_tables = [
@@ -91,12 +120,12 @@ class TestMSSQLBasicOperations:
 
         # Insert data
         mssql_db.execute(
-            "INSERT INTO test_users (username, email) VALUES (?, ?)",
-            ("john_doe", "john@example.com")
+            "INSERT INTO test_users (username, email) VALUES (:username, :email)",
+            {"username": "john_doe", "email": "john@example.com"}
         )
 
         # Select data
-        result = mssql_db.execute("SELECT * FROM test_users WHERE username = ?", ("john_doe",))
+        result = mssql_db.execute("SELECT * FROM test_users WHERE username = :username", {"username": "john_doe"})
         assert len(result) == 1
         assert result[0]['username'] == "john_doe"
         assert result[0]['email'] == "john@example.com"
@@ -112,18 +141,18 @@ class TestMSSQLBasicOperations:
         ''')
 
         mssql_db.execute(
-            "INSERT INTO test_users (username, email) VALUES (?, ?)",
-            ("john_doe", "john@example.com")
+            "INSERT INTO test_users (username, email) VALUES (:username, :email)",
+            {"username": "john_doe", "email": "john@example.com"}
         )
 
         # Update data
         mssql_db.execute(
-            "UPDATE test_users SET email = ? WHERE username = ?",
-            ("newemail@example.com", "john_doe")
+            "UPDATE test_users SET email = :email WHERE username = :username",
+            {"email": "newemail@example.com", "username": "john_doe"}
         )
 
         # Verify update
-        result = mssql_db.execute("SELECT email FROM test_users WHERE username = ?", ("john_doe",))
+        result = mssql_db.execute("SELECT email FROM test_users WHERE username = :username", {"username": "john_doe"})
         assert result[0]['email'] == "newemail@example.com"
 
     def test_delete(self, mssql_db):
@@ -135,10 +164,10 @@ class TestMSSQLBasicOperations:
             )
         ''')
 
-        mssql_db.execute("INSERT INTO test_users (username) VALUES (?)", ("john_doe",))
-        mssql_db.execute("DELETE FROM test_users WHERE username = ?", ("john_doe",))
+        mssql_db.execute("INSERT INTO test_users (username) VALUES (:username)", {"username": "john_doe"})
+        mssql_db.execute("DELETE FROM test_users WHERE username = :username", {"username": "john_doe"})
 
-        result = mssql_db.execute("SELECT * FROM test_users WHERE username = ?", ("john_doe",))
+        result = mssql_db.execute("SELECT * FROM test_users WHERE username = :username", {"username": "john_doe"})
         assert len(result) == 0
 
 
@@ -158,7 +187,7 @@ class TestMSSQLDataTypes:
 
         # Test with Unicode characters
         unicode_text = "Hello 世界 مرحبا עולם"
-        mssql_db.execute("INSERT INTO test_unicode (text) VALUES (?)", (unicode_text,))
+        mssql_db.execute("INSERT INTO test_unicode (text) VALUES (:text)", {"text": unicode_text})
 
         result = mssql_db.execute("SELECT text FROM test_unicode")
         assert result[0]['text'] == unicode_text
@@ -174,7 +203,7 @@ class TestMSSQLDataTypes:
         ''')
 
         test_time = datetime.now()
-        mssql_db.execute("INSERT INTO test_timestamps (event_time) VALUES (?)", (test_time,))
+        mssql_db.execute("INSERT INTO test_timestamps (event_time) VALUES (:event_time)", {"event_time": test_time})
 
         result = mssql_db.execute("SELECT created_at, event_time FROM test_timestamps")
         assert result[0]['created_at'] is not None
@@ -193,8 +222,8 @@ class TestMSSQLDataTypes:
         test_data = {"name": "John", "age": 30, "tags": ["python", "mssql"]}
 
         mssql_db.execute(
-            "INSERT INTO test_json (data) VALUES (?)",
-            (json.dumps(test_data),)
+            "INSERT INTO test_json (data) VALUES (:data)",
+            {"data": json.dumps(test_data)}
         )
 
         # Verify JSON is valid
@@ -215,7 +244,7 @@ class TestMSSQLDataTypes:
         ''')
 
         binary_data = b"Binary test data \x00\x01\x02\xFF"
-        mssql_db.execute("INSERT INTO test_binary (data) VALUES (?)", (binary_data,))
+        mssql_db.execute("INSERT INTO test_binary (data) VALUES (:data)", {"data": binary_data})
 
         result = mssql_db.execute("SELECT data FROM test_binary")
         assert result[0]['data'] == binary_data
@@ -237,8 +266,8 @@ class TestMSSQLTransactions:
 
         # Start transaction
         mssql_db.execute("BEGIN TRANSACTION")
-        mssql_db.execute("INSERT INTO test_transactions (value) VALUES (?)", ("test1",))
-        mssql_db.execute("INSERT INTO test_transactions (value) VALUES (?)", ("test2",))
+        mssql_db.execute("INSERT INTO test_transactions (value) VALUES (:value)", {"value": "test1"})
+        mssql_db.execute("INSERT INTO test_transactions (value) VALUES (:value)", {"value": "test2"})
         mssql_db.execute("COMMIT TRANSACTION")
 
         result = mssql_db.execute("SELECT COUNT(*) as count FROM test_transactions")
@@ -254,7 +283,7 @@ class TestMSSQLTransactions:
         ''')
 
         mssql_db.execute("BEGIN TRANSACTION")
-        mssql_db.execute("INSERT INTO test_transactions (value) VALUES (?)", ("test1",))
+        mssql_db.execute("INSERT INTO test_transactions (value) VALUES (:value)", {"value": "test1"})
         mssql_db.execute("ROLLBACK TRANSACTION")
 
         result = mssql_db.execute("SELECT COUNT(*) as count FROM test_transactions")
@@ -270,9 +299,9 @@ class TestMSSQLTransactions:
         ''')
 
         mssql_db.execute("BEGIN TRANSACTION")
-        mssql_db.execute("INSERT INTO test_transactions (value) VALUES (?)", ("test1",))
+        mssql_db.execute("INSERT INTO test_transactions (value) VALUES (:value)", {"value": "test1"})
         mssql_db.execute("SAVE TRANSACTION savepoint1")
-        mssql_db.execute("INSERT INTO test_transactions (value) VALUES (?)", ("test2",))
+        mssql_db.execute("INSERT INTO test_transactions (value) VALUES (:value)", {"value": "test2"})
         mssql_db.execute("ROLLBACK TRANSACTION savepoint1")
         mssql_db.execute("COMMIT TRANSACTION")
 
@@ -298,8 +327,8 @@ class TestMSSQLPerformance:
         # Insert 1000 records
         for i in range(1000):
             mssql_db.execute(
-                "INSERT INTO test_items (name, value) VALUES (?, ?)",
-                (f"item_{i}", i)
+                "INSERT INTO test_items (name, value) VALUES (:name, :value)",
+                {"name": f"item_{i}", "value": i}
             )
 
         result = mssql_db.execute("SELECT COUNT(*) as count FROM test_items")
@@ -321,14 +350,14 @@ class TestMSSQLPerformance:
         # Insert test data
         for i in range(100):
             mssql_db.execute(
-                "INSERT INTO test_items (name, value) VALUES (?, ?)",
-                (f"item_{i}", i)
+                "INSERT INTO test_items (name, value) VALUES (:name, :value)",
+                {"name": f"item_{i}", "value": i}
             )
 
         # Query using index
         result = mssql_db.execute(
-            "SELECT * FROM test_items WHERE name = ?",
-            ("item_50",)
+            "SELECT * FROM test_items WHERE name = :name",
+            {"name": "item_50"}
         )
 
         assert len(result) == 1
@@ -336,6 +365,12 @@ class TestMSSQLPerformance:
 
     def test_stored_procedure(self, mssql_db):
         """Test creating and calling a stored procedure"""
+        # Drop procedure if it exists
+        try:
+            mssql_db.execute("DROP PROCEDURE IF EXISTS GetItemByName")
+        except:
+            pass
+
         mssql_db.execute('''
             CREATE TABLE test_items (
                 id INT IDENTITY(1,1) PRIMARY KEY,
@@ -356,12 +391,12 @@ class TestMSSQLPerformance:
 
         # Insert test data
         mssql_db.execute(
-            "INSERT INTO test_items (name, value) VALUES (?, ?)",
-            ("test_item", 42)
+            "INSERT INTO test_items (name, value) VALUES (:name, :value)",
+            {"name": "test_item", "value": 42}
         )
 
         # Call stored procedure
-        result = mssql_db.execute("EXEC GetItemByName ?", ("test_item",))
+        result = mssql_db.execute("EXEC GetItemByName :name", {"name": "test_item"})
         assert len(result) == 1
         assert result[0]['value'] == 42
 
@@ -386,8 +421,8 @@ class TestMSSQLAdvancedFeatures:
         ''')
 
         mssql_db.execute(
-            "INSERT INTO test_data (first_name, last_name) VALUES (?, ?)",
-            ("John", "Doe")
+            "INSERT INTO test_data (first_name, last_name) VALUES (:first, :last)",
+            {"first": "John", "last": "Doe"}
         )
 
         result = mssql_db.execute("SELECT full_name FROM test_data")
@@ -403,8 +438,8 @@ class TestMSSQLAdvancedFeatures:
         ''')
 
         result = mssql_db.execute(
-            "INSERT INTO test_data (name) OUTPUT INSERTED.id VALUES (?)",
-            ("test_name",)
+            "INSERT INTO test_data (name) OUTPUT INSERTED.id VALUES (:name)",
+            {"name": "test_name"}
         )
 
         assert len(result) == 1
@@ -420,10 +455,10 @@ class TestMSSQLAdvancedFeatures:
             )
         ''')
 
-        mssql_db.execute("INSERT INTO test_data (name) VALUES (?)", ("TestName",))
+        mssql_db.execute("INSERT INTO test_data (name) VALUES (:name)", {"name": "TestName"})
 
         # Case-insensitive search should find the record
-        result = mssql_db.execute("SELECT * FROM test_data WHERE name = ?", ("testname",))
+        result = mssql_db.execute("SELECT * FROM test_data WHERE name = :name", {"name": "testname"})
         assert len(result) == 1
 
     def test_window_functions(self, mssql_db):
@@ -445,8 +480,8 @@ class TestMSSQLAdvancedFeatures:
         ]
         for category, value in items:
             mssql_db.execute(
-                "INSERT INTO test_items (category, value) VALUES (?, ?)",
-                (category, value)
+                "INSERT INTO test_items (category, value) VALUES (:category, :value)",
+                {"category": category, "value": value}
             )
 
         # Use window function

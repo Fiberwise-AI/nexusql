@@ -74,3 +74,74 @@ def skip_if_no_mssql(mssql_url):
         db.disconnect()
     except Exception as e:
         pytest.skip(f"MSSQL not available: {e}")
+
+
+@pytest.fixture
+def db_config(request, sqlite_url, postgresql_url, mysql_url, mssql_url):
+    """Provide a ConnectionConfig for the requested database type"""
+    from nexusql import ConnectionConfig
+
+    db_type = request.param if hasattr(request, 'param') else 'sqlite'
+
+    url_map = {
+        'sqlite': sqlite_url,
+        'postgresql': postgresql_url,
+        'mysql': mysql_url,
+        'mssql': mssql_url
+    }
+
+    db_url = url_map.get(db_type, sqlite_url)
+    return ConnectionConfig.from_url(db_url)
+
+
+@pytest.fixture
+def db_manager(request, sqlite_url, postgresql_url, mysql_url, mssql_url):
+    """Provide a DatabaseManager for the requested database type"""
+    from nexusql import DatabaseManager
+
+    db_type = request.param if hasattr(request, 'param') else 'sqlite'
+
+    url_map = {
+        'sqlite': sqlite_url,
+        'postgresql': postgresql_url,
+        'mysql': mysql_url,
+        'mssql': mssql_url
+    }
+
+    db_url = url_map.get(db_type, sqlite_url)
+    db = DatabaseManager(db_url)
+
+    # Try to connect, skip if not available
+    try:
+        if not db.connect():
+            # For MSSQL, try to create the database if it doesn't exist
+            if db_type == 'mssql':
+                master_url = mssql_url.rsplit('/', 1)[0] + '/master'
+                master_db = DatabaseManager(master_url)
+                if master_db.connect():
+                    try:
+                        # Extract database name from URL
+                        db_name = mssql_url.rsplit('/', 1)[1].split('?')[0]
+                        # MSSQL requires autocommit=True for CREATE DATABASE
+                        master_db._connection.autocommit = True
+                        master_db.execute(f"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{db_name}') CREATE DATABASE {db_name}")
+                        master_db._connection.autocommit = False
+                        master_db.disconnect()
+                        if not db.connect():
+                            pytest.skip(f"{db_type} not available")
+                    except Exception as e:
+                        pytest.skip(f"{db_type} database creation failed: {e}")
+                else:
+                    pytest.skip(f"{db_type} not available")
+            else:
+                pytest.skip(f"{db_type} not available")
+    except Exception as e:
+        pytest.skip(f"{db_type} not available: {e}")
+
+    yield db
+
+    # Cleanup
+    try:
+        db.disconnect()
+    except:
+        pass
