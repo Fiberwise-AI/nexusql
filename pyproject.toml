@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexusql"
+version = "0.1.0"
+description = "Multi-database abstraction layer with unified API for PostgreSQL, MySQL, SQLite, and MSSQL"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "David", email = "david@example.com"}
+]
+keywords = ["database", "sql", "postgresql", "mysql", "sqlite", "mssql", "multi-database", "abstraction"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+postgresql = ["psycopg2-binary>=2.9.0"]
+mysql = ["pymysql>=1.0.0"]
+mssql = ["pyodbc>=4.0.0"]
+all = [
+    "psycopg2-binary>=2.9.0",
+    "pymysql>=1.0.0",
+    "pyodbc>=4.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "psycopg2-binary>=2.9.0",
+    "pymysql>=1.0.0",
+    "pyodbc>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/nexusql"
+Documentation = "https://github.com/yourusername/nexusql#readme"
+Repository = "https://github.com/yourusername/nexusql"
+Issues = "https://github.com/yourusername/nexusql/issues"
+
+[tool.setuptools]
+packages = ["nexusql"]
+
+[tool.setuptools.package-data]
+nexusql = ["migrations/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
