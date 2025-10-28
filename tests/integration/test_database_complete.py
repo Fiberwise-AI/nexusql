@@ -48,7 +48,7 @@ def mssql_config():
     return ConnectionConfig(database_type=DatabaseType.MSSQL, database_url=url)
 
 
-@pytest.fixture(params=['postgres', 'mysql'])  # MSSQL excluded for now (not running)
+@pytest.fixture(params=['postgres', 'mysql', 'mssql'])
 def db_config(request, postgres_config, mysql_config, mssql_config):
     """Parametrized fixture for all database types"""
     configs = {
@@ -62,6 +62,12 @@ def db_config(request, postgres_config, mysql_config, mssql_config):
 @pytest.fixture
 def db(db_config):
     """Create database manager for testing"""
+    from tests.conftest import ensure_mssql_database_exists
+
+    # For MSSQL, ensure test database exists first
+    if db_config.database_type == DatabaseType.MSSQL:
+        ensure_mssql_database_exists(db_config.database_url)
+
     manager = DatabaseManager(db_config)
     manager.connect()
 

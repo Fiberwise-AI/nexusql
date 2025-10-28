@@ -194,6 +194,12 @@ def db_config(request, postgres_config, mysql_config, mssql_config):
 @pytest.fixture
 def db_manager(db_config):
     """Create database manager for testing"""
+    from tests.conftest import ensure_mssql_database_exists
+
+    # For MSSQL, ensure test database exists first
+    if db_config.database_type == DatabaseType.MSSQL:
+        ensure_mssql_database_exists(db_config.database_url)
+
     db = DatabaseManager(db_config)
     db.connect()
 

@@ -29,33 +29,12 @@ def mssql_config():
 @pytest.fixture
 def mssql_db(mssql_config):
     """Create an MSSQL database manager for testing"""
-    db = DatabaseManager(mssql_config)
+    from tests.conftest import ensure_mssql_database_exists
 
     # Ensure test database exists first
-    from urllib.parse import urlparse
-    test_url = mssql_config.database_url
-    parsed = urlparse(test_url)
-    db_name = parsed.path.lstrip('/')
+    ensure_mssql_database_exists(mssql_config.database_url)
 
-    # Build master URL preserving all query parameters
-    master_url = f"{parsed.scheme}://{parsed.netloc}/master"
-    if parsed.query:
-        master_url += f"?{parsed.query}"
-
-    master_db = DatabaseManager(master_url)
-    try:
-        if not master_db.connect():
-            pytest.skip("MSSQL master database not available")
-
-        # Create test database if it doesn't exist
-        master_db._connection.autocommit = True
-        master_db.execute(f"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{db_name}') CREATE DATABASE {db_name}")
-        master_db._connection.autocommit = False
-        master_db.disconnect()
-    except Exception as e:
-        pytest.skip(f"Cannot create MSSQL test database: {e}")
-
-    # Try to connect, skip if not available
+    db = DatabaseManager(mssql_config)
     if not db.connect():
         pytest.skip("MSSQL not available")
 

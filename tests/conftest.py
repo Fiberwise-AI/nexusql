@@ -94,6 +94,41 @@ def db_config(request, sqlite_url, postgresql_url, mysql_url, mssql_url):
     return ConnectionConfig.from_url(db_url)
 
 
+def ensure_mssql_database_exists(database_url: str) -> None:
+    """
+    Ensure MSSQL test database exists by connecting to master and creating it.
+
+    MSSQL cannot auto-create databases like PostgreSQL/MySQL, so we must:
+    1. Connect to the master database
+    2. Execute CREATE DATABASE IF NOT EXISTS
+    3. Disconnect from master
+
+    Args:
+        database_url: Full MSSQL connection URL including database name and query params
+    """
+    from urllib.parse import urlparse
+    from nexusql import DatabaseManager
+
+    parsed = urlparse(database_url)
+    db_name = parsed.path.lstrip('/')
+
+    # Build master URL preserving all query parameters
+    master_url = f"{parsed.scheme}://{parsed.netloc}/master"
+    if parsed.query:
+        master_url += f"?{parsed.query}"
+
+    master_db = DatabaseManager(master_url)
+    if not master_db.connect():
+        pytest.skip("MSSQL master database not available")
+
+    try:
+        master_db._connection.autocommit = True
+        master_db.execute(f"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{db_name}') CREATE DATABASE {db_name}")
+        master_db._connection.autocommit = False
+    finally:
+        master_db.disconnect()
+
+
 @pytest.fixture
 def db_manager(request, sqlite_url, postgresql_url, mysql_url, mssql_url):
     """Provide a DatabaseManager for the requested database type"""
@@ -109,31 +144,12 @@ def db_manager(request, sqlite_url, postgresql_url, mysql_url, mssql_url):
     }
 
     db_url = url_map.get(db_type, sqlite_url)
-    db = DatabaseManager(db_url)
 
     # For MSSQL, ensure test database exists first
     if db_type == 'mssql':
-        from urllib.parse import urlparse
-        parsed = urlparse(mssql_url)
-        db_name = parsed.path.lstrip('/')
+        ensure_mssql_database_exists(mssql_url)
 
-        # Build master URL preserving all query parameters
-        master_url = f"{parsed.scheme}://{parsed.netloc}/master"
-        if parsed.query:
-            master_url += f"?{parsed.query}"
-
-        master_db = DatabaseManager(master_url)
-        try:
-            if not master_db.connect():
-                pytest.skip("MSSQL master database not available")
-
-            # Create test database if it doesn't exist
-            master_db._connection.autocommit = True
-            master_db.execute(f"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{db_name}') CREATE DATABASE {db_name}")
-            master_db._connection.autocommit = False
-            master_db.disconnect()
-        except Exception as e:
-            pytest.skip(f"Cannot create MSSQL test database: {e}")
+    db = DatabaseManager(db_url)
 
     # Try to connect, skip if not available
     try:
