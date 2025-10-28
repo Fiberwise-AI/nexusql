@@ -51,8 +51,9 @@ Documentation = "https://github.com/yourusername/nexusql#readme"
 Repository = "https://github.com/yourusername/nexusql"
 Issues = "https://github.com/yourusername/nexusql/issues"
 
-[tool.setuptools]
-packages = ["nexusql"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nexusql*"]
 
 [tool.setuptools.package-data]
 nexusql = ["migrations/*.sql"]
