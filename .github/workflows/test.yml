@@ -20,8 +20,7 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_USER: testuser
-          POSTGRES_PASSWORD: testpass
+          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: nexusql_test
         ports:
           - 5432:5432
@@ -32,33 +31,33 @@ jobs:
           --health-retries 5
 
       mysql:
-        image: mysql:8.0
+        image: mysql:8
         env:
           MYSQL_ROOT_PASSWORD: rootpass
-          MYSQL_DATABASE: nexusql_test
           MYSQL_USER: testuser
           MYSQL_PASSWORD: testpass
+          MYSQL_DATABASE: nexusql_test
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
+          --health-cmd "mysqladmin ping -h localhost -u testuser -ptestpass"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
       mssql:
         image: mcr.microsoft.com/mssql/server:2022-latest
         env:
           ACCEPT_EULA: Y
           SA_PASSWORD: TestPass123!
-          MSSQL_PID: Developer
+          MSSQL_PID: Express
         ports:
           - 1433:1433
         options: >-
-          --health-cmd="/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P TestPass123! -Q 'SELECT 1'"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
+          --health-cmd "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P TestPass123! -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
     - uses: actions/checkout@v4
@@ -69,16 +68,13 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
 
-    - name: Install system dependencies
+    - name: Install ODBC Driver for SQL Server (for MSSQL)
       run: |
-        sudo apt-get update
-        sudo apt-get install -y unixodbc-dev
-
-        # Install Microsoft ODBC Driver for SQL Server
         curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
         curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
         sudo apt-get update
         sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+        sudo apt-get install -y unixodbc-dev
 
     - name: Install Python dependencies
       run: |
@@ -99,17 +95,15 @@ jobs:
           sleep 2
         done
 
-        # Wait for MSSQL
-        sleep 10
         echo "Databases are ready"
 
     - name: Run unit tests
       run: |
         pytest tests/unit/ -v --tb=short --cov=nexusql --cov-report=xml --cov-report=term
 
-    - name: Run integration tests
+    - name: Run integration tests (All Databases)
       env:
-        TEST_POSTGRESQL_URL: "postgresql://testuser:testpass@localhost:5432/nexusql_test"
+        TEST_POSTGRESQL_URL: "postgresql://postgres:postgres@localhost:5432/nexusql_test"
         TEST_MYSQL_URL: "mysql://testuser:testpass@localhost:3306/nexusql_test"
         TEST_MSSQL_URL: "mssql://sa:TestPass123!@localhost:1433/master?TrustServerCertificate=yes"
       run: |

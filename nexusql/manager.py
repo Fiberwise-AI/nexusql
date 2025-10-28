@@ -520,16 +520,9 @@ class DatabaseManager:
             for key in params.keys():
                 new_query = new_query.replace(f":{key}", f"%({key})s")
 
-            # Convert booleans to integers if column type is INTEGER
-            # PostgreSQL is strict about types - bool can't go into INTEGER columns
-            converted_params = {}
-            for key, value in params.items():
-                if isinstance(value, bool):
-                    converted_params[key] = 1 if value else 0
-                else:
-                    converted_params[key] = value
-
-            return new_query, converted_params
+            # PostgreSQL handles Python bool natively - no conversion needed
+            # psycopg2 will convert True/False to PostgreSQL's TRUE/FALSE automatically
+            return new_query, params
 
         elif self.config.database_type == DatabaseType.MYSQL:
             # MySQL uses %s with positional tuple
@@ -546,11 +539,9 @@ class DatabaseManager:
                 if param_name not in params:
                     raise ValueError(f"Parameter :{param_name} used in query but not provided in params")
                 value = params[param_name]
-                # Convert booleans to integers for MySQL INTEGER columns
-                if isinstance(value, bool):
-                    param_list.append(1 if value else 0)
-                else:
-                    param_list.append(value)
+                # PostgreSQL handles booleans natively, MySQL uses TINYINT
+                # Both accept True/False Python values correctly
+                param_list.append(value)
 
             # Replace all :param_name with %s in one pass
             new_query = re.sub(param_pattern, '%s', query)
