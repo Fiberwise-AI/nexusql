@@ -31,37 +31,33 @@ def mssql_db(mssql_config):
     """Create an MSSQL database manager for testing"""
     db = DatabaseManager(mssql_config)
 
-    # Try to connect, if database doesn't exist, try creating it
-    if not db.connect():
-        # Try connecting to master to create the database
-        test_url = os.environ.get(
-            "TEST_MSSQL_URL",
-            "mssql://sa:TestPass123!@localhost:11433/ia_modules_test"
-        )
-        # Preserve query parameters when switching to master database
-        if '?' in test_url:
-            base_url, query_params = test_url.rsplit('?', 1)
-            master_url = base_url.rsplit('/', 1)[0] + '/master?' + query_params
-        else:
-            master_url = test_url.rsplit('/', 1)[0] + '/master'
+    # Ensure test database exists first
+    from urllib.parse import urlparse
+    test_url = mssql_config.database_url
+    parsed = urlparse(test_url)
+    db_name = parsed.path.lstrip('/')
 
-        master_db = DatabaseManager(master_url)
-        if master_db.connect():
-            try:
-                # Extract database name from URL
-                db_name = test_url.rsplit('/', 1)[1].split('?')[0]
-                # Create the test database - MSSQL requires autocommit for CREATE DATABASE
-                master_db._connection.autocommit = True
-                master_db.execute(f"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{db_name}') CREATE DATABASE {db_name}")
-                master_db._connection.autocommit = False
-                master_db.disconnect()
-                # Now try connecting to the test database again
-                if not db.connect():
-                    pytest.skip("Cannot connect to MSSQL database")
-            except Exception as e:
-                pytest.skip(f"Cannot create MSSQL test database: {e}")
-        else:
-            pytest.skip("MSSQL not available")
+    # Build master URL preserving all query parameters
+    master_url = f"{parsed.scheme}://{parsed.netloc}/master"
+    if parsed.query:
+        master_url += f"?{parsed.query}"
+
+    master_db = DatabaseManager(master_url)
+    try:
+        if not master_db.connect():
+            pytest.skip("MSSQL master database not available")
+
+        # Create test database if it doesn't exist
+        master_db._connection.autocommit = True
+        master_db.execute(f"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{db_name}') CREATE DATABASE {db_name}")
+        master_db._connection.autocommit = False
+        master_db.disconnect()
+    except Exception as e:
+        pytest.skip(f"Cannot create MSSQL test database: {e}")
+
+    # Try to connect, skip if not available
+    if not db.connect():
+        pytest.skip("MSSQL not available")
 
     # Clean up test tables
     test_tables = [

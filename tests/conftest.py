@@ -111,36 +111,34 @@ def db_manager(request, sqlite_url, postgresql_url, mysql_url, mssql_url):
     db_url = url_map.get(db_type, sqlite_url)
     db = DatabaseManager(db_url)
 
+    # For MSSQL, ensure test database exists first
+    if db_type == 'mssql':
+        from urllib.parse import urlparse
+        parsed = urlparse(mssql_url)
+        db_name = parsed.path.lstrip('/')
+
+        # Build master URL preserving all query parameters
+        master_url = f"{parsed.scheme}://{parsed.netloc}/master"
+        if parsed.query:
+            master_url += f"?{parsed.query}"
+
+        master_db = DatabaseManager(master_url)
+        try:
+            if not master_db.connect():
+                pytest.skip("MSSQL master database not available")
+
+            # Create test database if it doesn't exist
+            master_db._connection.autocommit = True
+            master_db.execute(f"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{db_name}') CREATE DATABASE {db_name}")
+            master_db._connection.autocommit = False
+            master_db.disconnect()
+        except Exception as e:
+            pytest.skip(f"Cannot create MSSQL test database: {e}")
+
     # Try to connect, skip if not available
     try:
         if not db.connect():
-            # For MSSQL, try to create the database if it doesn't exist
-            if db_type == 'mssql':
-                # Preserve query parameters when switching to master database
-                if '?' in mssql_url:
-                    base_url, query_params = mssql_url.rsplit('?', 1)
-                    master_url = base_url.rsplit('/', 1)[0] + '/master?' + query_params
-                else:
-                    master_url = mssql_url.rsplit('/', 1)[0] + '/master'
-
-                master_db = DatabaseManager(master_url)
-                if master_db.connect():
-                    try:
-                        # Extract database name from URL
-                        db_name = mssql_url.rsplit('/', 1)[1].split('?')[0]
-                        # MSSQL requires autocommit=True for CREATE DATABASE
-                        master_db._connection.autocommit = True
-                        master_db.execute(f"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{db_name}') CREATE DATABASE {db_name}")
-                        master_db._connection.autocommit = False
-                        master_db.disconnect()
-                        if not db.connect():
-                            pytest.skip(f"{db_type} not available")
-                    except Exception as e:
-                        pytest.skip(f"{db_type} database creation failed: {e}")
-                else:
-                    pytest.skip(f"{db_type} not available")
-            else:
-                pytest.skip(f"{db_type} not available")
+            pytest.skip(f"{db_type} not available")
     except Exception as e:
         pytest.skip(f"{db_type} not available: {e}")
 
