@@ -20,54 +20,57 @@ The following issues have been **fixed and tested**:
 
 ---
 
+## ✅ **Recently Resolved Issues**
+
+### ✅ Issue #1: execute_script() SQL Splitting is Fragile - **FIXED**
+
+**Location**: `nexusql/manager.py:792-935`
+
+**Problem**: For non-SQLite databases, `execute_script()` was using naive `;` splitting which failed on SQL containing semicolons in string literals or function bodies.
+
+**Solution**: Implemented robust SQL statement parser `_split_sql_statements()` that properly handles:
+- Single-quoted strings with escaped quotes (`'a''b'`)
+- Double-quoted identifiers with escaped quotes (`"table""name"`)
+- Dollar-quoted strings for PostgreSQL functions (`$$`, `$tag$`)
+- Single-line comments (`--`)
+- Multi-line comments (`/* */`)
+- Comment-only statements are filtered out to prevent empty query errors
+
+**Tests Added**:
+- Unit tests: [tests/unit/test_sql_splitting.py](../tests/unit/test_sql_splitting.py) - 14 test cases
+- Integration tests: [tests/integration/test_execute_script.py](../tests/integration/test_execute_script.py) - 35 test cases across PostgreSQL, MySQL, and MSSQL
+
+**Test Results**: ✅ All 49 tests passing across all database backends
+
+### ✅ Issue #2: Binary/BLOB Parameter Handling - **FIXED**
+
+**Location**: No code changes required - binary data already handled correctly by `_convert_params()`
+
+**Problem**: No tests existed to verify that binary data (bytes) can be passed as parameters and retrieved correctly across different database backends.
+
+**Solution**: Created comprehensive test suite demonstrating that binary data handling works correctly without code modifications. The existing parameter conversion system properly handles `bytes` objects.
+
+**Database-Specific Types Tested**:
+- SQLite: BLOB
+- PostgreSQL: BYTEA
+- MySQL: LONGBLOB (for larger data)
+- MSSQL: VARBINARY(MAX)
+
+**Tests Added**:
+- Integration tests: [tests/integration/test_binary_data.py](../tests/integration/test_binary_data.py) - 60 test cases covering:
+  - Basic binary INSERT/SELECT operations
+  - Empty bytes and NULL handling
+  - All byte values (0-255)
+  - Special sequences (PNG headers, null bytes, high-entropy data)
+  - Various sizes (1KB, 64KB, 1MB)
+  - Multiple rows and UPDATE operations
+  - Edge cases (SQL injection patterns, repeated bytes)
+
+**Test Results**: ✅ All 60 tests passing across SQLite, PostgreSQL, MySQL, and MSSQL
+
+---
+
 ## 🔴 **Outstanding Issues**
-
-### Issue #1: execute_script() SQL Splitting is Fragile
-
-**Location**: `nexusql/manager.py:765-778`
-
-**Problem**: For non-SQLite databases, `execute_script()` uses naive `;` splitting which will fail on SQL containing semicolons in string literals or function bodies.
-
-```python
-if self.config.database_type == DatabaseType.SQLITE:
-    self._connection.executescript(translated_script)
-else:
-    # ❌ Naive split - will break on: INSERT INTO t VALUES ('a;b');
-    statements = [s.strip() for s in script.split(';') if s.strip()]
-    for statement in statements:
-        self.execute(statement)
-```
-
-**Example Failure Case**:
-```sql
-INSERT INTO users (name, bio) VALUES ('John', 'Loves SQL; enjoys programming');
-CREATE TABLE posts (id INT, content TEXT);
-```
-
-This will incorrectly split into 3 statements instead of 2.
-
----
-
-### Issue #2: Binary/BLOB Parameter Handling
-
-**Problem**: No tests verify that binary data (bytes) can be passed as parameters and retrieved correctly.
-
-**Use Case**:
-```python
-db.execute("INSERT INTO files (name, data) VALUES (:name, :data)", {
-    'name': 'image.png',
-    'data': b'\x89PNG\r\n\x1a\n...'  # Binary image data
-})
-```
-
-**Risks**:
-- Different databases may require different binary encoding
-- SQLite uses BLOB type
-- PostgreSQL uses BYTEA type
-- MySQL uses BLOB/BINARY types
-- MSSQL uses VARBINARY type
-
----
 
 ### Issue #3: Connection Pooling/Concurrent Access
 
@@ -94,138 +97,7 @@ db.execute("INSERT INTO files (name, data) VALUES (:name, :data)", {
 
 ## 📋 **Implementation Plan**
 
-### Phase 1: Fix execute_script() (High Priority)
-
-**Goal**: Properly parse multi-statement SQL scripts for all databases.
-
-**Approach**:
-1. Implement proper SQL statement parser that respects:
-   - String literals (single and double quotes)
-   - Comments (-- and /* */)
-   - Stored procedures/functions (BEGIN...END blocks)
-   - Dollar-quoted strings in PostgreSQL
-
-2. Use `sqlparse` library for robust parsing:
-```python
-import sqlparse
-
-def execute_script(self, script: str):
-    translated_script = self.translate_sql(script)
-
-    if self.config.database_type == DatabaseType.SQLITE:
-        self._connection.executescript(translated_script)
-    else:
-        # Proper SQL parsing
-        statements = sqlparse.split(translated_script)
-        for statement in statements:
-            if statement.strip():
-                self.execute(statement)
-```
-
-**Test Cases to Add**:
-```python
-def test_execute_script_with_semicolons_in_strings(db):
-    """Test script with semicolons inside string literals"""
-    script = """
-        CREATE TABLE test (id INT, value TEXT);
-        INSERT INTO test VALUES (1, 'Hello; World');
-        INSERT INTO test VALUES (2, 'Uses ; multiple; times');
-    """
-    db.execute_script(script)
-    results = db.fetch_all("SELECT * FROM test ORDER BY id")
-    assert len(results) == 2
-    assert results[0]['value'] == 'Hello; World'
-
-def test_execute_script_with_comments(db):
-    """Test script with SQL comments"""
-    script = """
-        -- Create table
-        CREATE TABLE test (id INT);
-        /* Multi-line
-           comment */
-        INSERT INTO test VALUES (1);
-    """
-    db.execute_script(script)
-```
-
-**Implementation Steps**:
-1. Add `sqlparse` to dependencies in `pyproject.toml`
-2. Implement improved `execute_script()` in `manager.py`
-3. Add test file: `tests/integration/test_execute_script.py`
-4. Run tests across all database backends
-
-**Estimated Effort**: 4-6 hours
-
----
-
-### Phase 2: Binary/BLOB Support (Medium Priority)
-
-**Goal**: Support binary data as parameters across all databases.
-
-**Implementation Steps**:
-
-1. Add binary type handling in `_convert_params()`:
-```python
-def _convert_params(self, query: str, params: Dict) -> Tuple[str, Union[Dict, Tuple]]:
-    # ... existing code ...
-
-    for key, value in params.items():
-        # Handle binary data
-        if isinstance(value, bytes):
-            if self.config.database_type == DatabaseType.MSSQL:
-                # MSSQL may need special handling
-                param_list.append(value)
-            else:
-                param_list.append(value)
-        # ... rest of conversions ...
-```
-
-2. Add test file: `tests/integration/test_binary_data.py`:
-```python
-import pytest
-
-def test_binary_insert_and_retrieve(db):
-    """Test storing and retrieving binary data"""
-    db.execute("""
-        CREATE TABLE files (
-            id INTEGER PRIMARY KEY,
-            filename TEXT,
-            data BLOB
-        )
-    """)
-
-    # Small binary data
-    test_data = b'\x00\x01\x02\x03\xff\xfe\xfd'
-    db.execute(
-        "INSERT INTO files (id, filename, data) VALUES (:id, :name, :data)",
-        {'id': 1, 'name': 'test.bin', 'data': test_data}
-    )
-
-    result = db.fetch_one("SELECT * FROM files WHERE id = :id", {'id': 1})
-    assert result['data'] == test_data
-
-def test_large_binary_data(db):
-    """Test large binary data (1MB)"""
-    large_data = bytes(range(256)) * 4096  # 1MB
-    # ... similar test with large data ...
-
-def test_image_like_binary(db):
-    """Test PNG-like binary header"""
-    png_header = b'\x89PNG\r\n\x1a\n'
-    # ... test with realistic binary data ...
-```
-
-**Implementation Steps**:
-1. Research database-specific binary handling requirements
-2. Implement binary parameter conversion
-3. Create comprehensive test suite
-4. Test with various binary sizes (1KB, 100KB, 1MB)
-
-**Estimated Effort**: 3-4 hours
-
----
-
-### Phase 3: Connection Pooling/Concurrency (Low Priority)
+### Phase 1: Connection Pooling/Concurrency (Low Priority)
 
 **Goal**: Document thread safety limitations and add concurrency tests.
 
@@ -287,7 +159,7 @@ def test_multiple_instances_concurrent(db_url):
 
 ---
 
-### Phase 4: Auto-increment ID Support (Future Enhancement)
+### Phase 2: Auto-increment ID Support (Future Enhancement)
 
 **Goal**: Provide consistent API for retrieving auto-generated IDs.
 
@@ -309,12 +181,12 @@ result = db.execute(
 
 | Issue | Priority | Effort | Status |
 |-------|----------|--------|--------|
-| execute_script() splitting | 🔴 High | 4-6h | Not Started |
-| Binary/BLOB support | 🟡 Medium | 3-4h | Not Started |
+| ~~execute_script() splitting~~ | 🔴 High | ~~4-6h~~ | ✅ **Completed** |
+| ~~Binary/BLOB support~~ | 🟡 Medium | ~~3-4h~~ | ✅ **Completed** |
 | Concurrency docs/tests | 🟢 Low | 2-3h | Not Started |
 | Auto-increment ID | 🔵 Future | 8-12h | Deferred |
 
-**Total Estimated Effort**: 9-13 hours for high/medium priority items
+**Total Remaining Effort**: 2-3 hours for remaining priority items
 
 ---
 
@@ -359,10 +231,10 @@ The following features are **not yet implemented** but may be needed for future 
 
 ## 🎯 **Recommended Implementation Order**
 
-### Phase 1: Fix Critical Issues (9-13 hours)
-1. Execute_script() SQL splitting
-2. Binary/BLOB support
-3. Concurrency documentation
+### ✅ Phase 1: Fix Critical Issues - **COMPLETE**
+1. ✅ Execute_script() SQL splitting - **DONE**
+2. ✅ Binary/BLOB support - **DONE**
+3. Concurrency documentation - **TODO**
 
 ### Phase 2: Production Readiness (30-42 hours)
 4. Connection pooling
@@ -390,10 +262,6 @@ The following features are **not yet implemented** but may be needed for future 
 
 Update `pyproject.toml`:
 ```toml
-dependencies = [
-    "sqlparse>=0.4.0"  # For execute_script() SQL parsing
-]
-
 [project.optional-dependencies]
 # Future dependencies for advanced features
 pooling = [
