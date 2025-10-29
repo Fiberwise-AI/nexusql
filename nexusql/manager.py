@@ -122,7 +122,7 @@ class DatabaseManager:
                     cursor_factory=psycopg2.extras.RealDictCursor
                 )
                 self._connection.autocommit = False
-                logger.info(f"✓ Connected to PostgreSQL database")
+                logger.info(f"Connected to PostgreSQL database")
                 return True
 
             elif self.config.database_type == DatabaseType.MYSQL:
@@ -142,7 +142,7 @@ class DatabaseManager:
                     cursorclass=pymysql.cursors.DictCursor,
                     autocommit=False
                 )
-                logger.info(f"✓ Connected to MySQL database")
+                logger.info(f"Connected to MySQL database")
                 return True
 
             elif self.config.database_type == DatabaseType.MSSQL:
@@ -196,7 +196,7 @@ class DatabaseManager:
                     self._connection = pyodbc.connect(conn_str)
 
                 self._connection.autocommit = False
-                logger.info(f"✓ Connected to MSSQL database")
+                logger.info(f"Connected to MSSQL database")
                 return True
 
             else:
@@ -789,6 +789,124 @@ class DatabaseManager:
                     pass
             return False
 
+    def _split_sql_statements(self, script: str) -> List[str]:
+        """
+        Split a SQL script into individual statements, properly handling:
+        - Single-quoted strings with escaped quotes
+        - Double-quoted identifiers with escaped quotes
+        - Dollar-quoted strings (PostgreSQL)
+        - Single-line comments (--)
+        - Multi-line comments (/* */)
+
+        Returns a list of non-empty SQL statements.
+        """
+        statements = []
+        current_statement = []
+        i = 0
+        length = len(script)
+
+        while i < length:
+            char = script[i]
+
+            # Handle single-line comments
+            if char == '-' and i + 1 < length and script[i + 1] == '-':
+                # Add comment to current statement
+                comment_start = i
+                i += 2
+                while i < length and script[i] not in ('\n', '\r'):
+                    i += 1
+                current_statement.append(script[comment_start:i])
+                continue
+
+            # Handle multi-line comments
+            if char == '/' and i + 1 < length and script[i + 1] == '*':
+                comment_start = i
+                i += 2
+                while i < length - 1:
+                    if script[i] == '*' and script[i + 1] == '/':
+                        i += 2
+                        break
+                    i += 1
+                current_statement.append(script[comment_start:i])
+                continue
+
+            # Handle single-quoted strings
+            if char == "'":
+                string_start = i
+                i += 1
+                while i < length:
+                    if script[i] == "'":
+                        # Check for escaped quote
+                        if i + 1 < length and script[i + 1] == "'":
+                            i += 2  # Skip escaped quote
+                        else:
+                            i += 1  # End of string
+                            break
+                    else:
+                        i += 1
+                current_statement.append(script[string_start:i])
+                continue
+
+            # Handle double-quoted identifiers
+            if char == '"':
+                string_start = i
+                i += 1
+                while i < length:
+                    if script[i] == '"':
+                        # Check for escaped quote
+                        if i + 1 < length and script[i + 1] == '"':
+                            i += 2  # Skip escaped quote
+                        else:
+                            i += 1  # End of identifier
+                            break
+                    else:
+                        i += 1
+                current_statement.append(script[string_start:i])
+                continue
+
+            # Handle dollar-quoted strings (PostgreSQL)
+            if char == '$':
+                # Try to match dollar quote pattern
+                dollar_end = i + 1
+                while dollar_end < length and (script[dollar_end].isalnum() or script[dollar_end] == '_'):
+                    dollar_end += 1
+
+                if dollar_end < length and script[dollar_end] == '$':
+                    # Found opening dollar quote
+                    tag = script[i:dollar_end + 1]
+                    string_start = i
+                    i = dollar_end + 1
+
+                    # Find closing dollar quote
+                    while i < length:
+                        if script[i:i + len(tag)] == tag:
+                            i += len(tag)
+                            break
+                        i += 1
+
+                    current_statement.append(script[string_start:i])
+                    continue
+
+            # Handle statement terminator
+            if char == ';':
+                stmt = ''.join(current_statement).strip()
+                if stmt:
+                    statements.append(stmt)
+                current_statement = []
+                i += 1
+                continue
+
+            # Regular character
+            current_statement.append(char)
+            i += 1
+
+        # Add final statement if exists
+        stmt = ''.join(current_statement).strip()
+        if stmt:
+            statements.append(stmt)
+
+        return statements
+
     async def execute_script(self, script: str) -> 'QueryResult':
         """Execute a SQL script (multiple statements)"""
         try:
@@ -801,10 +919,18 @@ class DatabaseManager:
                 self._connection.commit()
             else:
                 # For PostgreSQL/MySQL/MSSQL, execute statements one by one
-                statements = [stmt.strip() for stmt in translated_script.split(';') if stmt.strip()]
+                statements = self._split_sql_statements(translated_script)
                 for statement in statements:
-                    # Skip empty statements
-                    if not statement:
+                    # Skip statements that are only comments/whitespace
+                    # Remove all comments and check if anything remains
+                    test_stmt = statement
+                    # Remove single-line comments
+                    import re
+                    test_stmt = re.sub(r'--[^\n]*', '', test_stmt)
+                    # Remove multi-line comments
+                    test_stmt = re.sub(r'/\*.*?\*/', '', test_stmt, flags=re.DOTALL)
+                    # If nothing left after removing comments, skip
+                    if not test_stmt.strip():
                         continue
                     self.execute(statement)
 
