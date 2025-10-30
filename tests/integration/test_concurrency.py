@@ -10,6 +10,9 @@ import concurrent.futures
 import time
 from nexusql import DatabaseManager, ConnectionConfig, DatabaseType
 
+# Import shared MSSQL helper from conftest
+from ..conftest import ensure_mssql_database_exists
+
 
 @pytest.fixture(params=[
     pytest.param('sqlite', marks=pytest.mark.sqlite),
@@ -42,6 +45,10 @@ def db_config(request):
 
     if not db_url:
         pytest.skip(f"{env_var} not set")
+
+    # For MSSQL, ensure test database exists first
+    if db_type == 'mssql':
+        ensure_mssql_database_exists(db_url)
 
     return ConnectionConfig(
         database_type=db_type_enum,
