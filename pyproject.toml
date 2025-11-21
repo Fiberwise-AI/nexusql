@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Multi-database abstraction layer with unified API for PostgreSQL, MySQL, SQLite, and MSSQL"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "David", email = "david@example.com"}
 ]
@@ -64,12 +64,17 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -W ignore::DeprecationWarning"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore::DeprecationWarning:.*sqlite3.*:",
+]
 markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
     "mysql: marks tests as MySQL-specific tests",
     "mssql: marks tests as MSSQL-specific tests",
     "postgresql: marks tests as PostgreSQL-specific tests",
+    "sqlite: marks tests as SQLite-specific tests",
+    "slow: marks tests as slow running tests",
 ]
