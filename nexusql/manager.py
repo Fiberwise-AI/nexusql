@@ -242,6 +242,9 @@ class DatabaseManager:
             result = re.sub(r'\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b', 'SERIAL PRIMARY KEY', result, flags=re.IGNORECASE)
             result = re.sub(r'\bINTEGER\s+PRIMARY\s+KEY\b', 'SERIAL PRIMARY KEY', result, flags=re.IGNORECASE)
 
+            # GROUP_CONCAT(expr) → STRING_AGG(expr::text, ',')
+            result = re.sub(r'\bGROUP_CONCAT\(([^)]+)\)', r"STRING_AGG(\1::text, ',')", result, flags=re.IGNORECASE)
+
             return result
 
         if self.config.database_type == DatabaseType.SQLITE:
@@ -284,6 +287,9 @@ class DatabaseManager:
             result = re.sub(r'\bNOW\(\)', 'CURRENT_TIMESTAMP', result)
             result = re.sub(r'\bCURRENT_DATE\b', "date('now')", result)
             result = re.sub(r'\bCURRENT_TIME\b', "time('now')", result)
+
+            # STRING_AGG(expr, ',') → GROUP_CONCAT(expr)
+            result = re.sub(r"\bSTRING_AGG\(([^,]+),\s*'[^']*'\)", r'GROUP_CONCAT(\1)', result, flags=re.IGNORECASE)
 
             # gen_random_uuid() → remove (SQLite doesn't support function defaults in DDL)
             # Applications should generate UUIDs before insert
@@ -715,6 +721,11 @@ class DatabaseManager:
                 return dict(row)
         except Exception as e:
             logger.error(f"fetch_one failed: {e}")
+            if self._connection:
+                try:
+                    self._connection.rollback()
+                except Exception:
+                    pass
             return None
 
     def fetch_all(self, query: str, params: Optional[Dict] = None) -> List[Dict]:
@@ -738,6 +749,11 @@ class DatabaseManager:
                 return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"fetch_all failed: {e}")
+            if self._connection:
+                try:
+                    self._connection.rollback()
+                except Exception:
+                    pass
             return []
     
     def create_table(self, table_name: str, schema: str):
