@@ -296,6 +296,12 @@ class DatabaseManager:
             result = re.sub(r'DEFAULT\s+gen_random_uuid\(\)', '', result)
             result = re.sub(r'gen_random_uuid\(\)', "lower(hex(randomblob(16)))", result)
 
+            # Translate PostgreSQL JSON operators to SQLite JSON functions
+            # Pattern: (column::jsonb)->>'key' → JSON_EXTRACT(column, '$.key')
+            result = re.sub(r'\((\w+(?:\.\w+)*)::jsonb\)->>\'(\w+)\'', r"JSON_EXTRACT(\1, '$.\2')", result)
+            # Pattern: column::jsonb->>'key' → JSON_EXTRACT(column, '$.key')
+            result = re.sub(r'(\w+(?:\.\w+)*)::jsonb->>\'(\w+)\'', r"JSON_EXTRACT(\1, '$.\2')", result)
+
             # PostgreSQL type casting (::type) → remove for SQLite
             # Examples: '{}'::jsonb, 'text'::varchar
             result = re.sub(r"'([^']*)'::jsonb", r"'\1'", result)
